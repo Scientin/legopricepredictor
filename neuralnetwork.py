@@ -43,34 +43,71 @@ def df_to_dataset(dataframe, shuffle=True, batch_size=32):
   ds = ds.batch(batch_size, drop_remainder=True)
   return ds
 
-#Feature layer preprocessing
-feature_columns = []
-
-for header in ['Year', 'Pieces', 'Figures']:
-  feature_columns.append(feature_column.numeric_column(header))
-
-theme = feature_column.categorical_column_with_vocabulary_list(
-      'Theme', dataframe.Theme.unique())
-theme_embedding = feature_column.embedding_column(theme, dimension=8)
-feature_columns.append(theme_embedding)
-
 #Run train and test dataframes through dataset converter
 batch_size = 32
 train_ds = df_to_dataset(train, batch_size=batch_size)
 test_ds = df_to_dataset(test, shuffle=False, batch_size=batch_size)
 
-#Dense neural network w/ normalizer
-model = keras.Sequential([keras.layers.DenseFeatures(feature_columns),
-    keras.layers.Normalization(axis=-1),
-    keras.layers.Dense(16, input_dim=3+len(theme.vocabulary_list), activation='relu'),
-    keras.layers.Dense(64, activation='relu'),
-    keras.layers.Dense(1)]
-)
+#Preprocessing normalization layer
+def get_normalization_layer(name, dataset):
+  normalizer = tf.keras.layers.Normalization(axis=None)
+  feature_ds = dataset.map(lambda x, y: x[name])
+  normalizer.adapt(feature_ds)
+  return normalizer
+
+#Preprocessing encoding layer
+def get_category_encoding_layer(name, dataset, max_tokens=None):
+  index = tf.keras.layers.StringLookup(max_tokens=max_tokens)
+  feature_ds = dataset.map(lambda x, y: x[name])
+  index.adapt(feature_ds)
+  encoder = tf.keras.layers.CategoryEncoding(num_tokens=index.vocabulary_size())
+  return lambda feature: encoder(index(feature))
+
+
+#Getting features
+[(train_features, label_batch)] = train_ds.take(1)
+#Single input list
+all_inputs = []
+encoded_features=[]
+
+#Normalize numeric features
+for header in ['Pieces', 'Year', 'Figures']:
+  numeric_col = tf.keras.Input(shape=(1,), name=header)
+  normalization_layer = get_normalization_layer(header, train_ds)
+  encoded_numeric_col = normalization_layer(numeric_col)
+  all_inputs.append(numeric_col)
+  encoded_features.append(encoded_numeric_col)
+
+#Encode categorical Theme column
+categorical_col = tf.keras.Input(shape=(1,), name='Theme', dtype='string')
+encoding_layer = get_category_encoding_layer(name='Theme',
+                                               dataset=train_ds,
+                                               max_tokens=5)
+encoded_categorical_col = encoding_layer(categorical_col)
+all_inputs.append(categorical_col)
+encoded_features.append(encoded_categorical_col)
+
+#Concatenate into one vector
+all_features = tf.keras.layers.concatenate(encoded_features)
+#Create model
+x = tf.keras.layers.Dense(32, activation="relu")(all_features)
+x = tf.keras.layers.Dense(64, activation="relu")(x)
+output = tf.keras.layers.Dense(1)(x)
+
+model = tf.keras.Model(all_inputs, output)
 
 #Compiling, training, and evaluation
 model.compile(optimizer='adam',loss='mean_absolute_error')
 
-model.fit(train_ds,
-          epochs=4)
+#Train model using callbacks to find best val_loss
+epochs = 100
+checkpointer = tf.keras.callbacks.ModelCheckpoint(filepath='weights.keras' ,
+verbose=1, save_best_only=True)
 
-model.evaluate(test_ds)
+train_history = model.fit(train_ds,
+validation_data=(test_ds),
+epochs=epochs, batch_size=batch_size, callbacks=[ checkpointer], verbose=1)
+#Weights with best val_loss are saved, allowing for the predictor to easily load
+
+model.load_weights('weights.keras')
+model.save('predictor.keras')

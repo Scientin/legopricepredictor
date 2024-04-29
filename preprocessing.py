@@ -47,7 +47,7 @@ def tablepreprocessing(table, title, year):
   #Convert pieces column to int type
   table_df['Pieces'] = table_df['Pieces'].astype(int)
   #Extract year of release, rename released to year
-  table_df.drop(columns=['Released'])
+  table_df = table_df.drop(columns=['Released'])
   table_df['Year'] = year
   #Redundancies
   table_df = table_df[table_df['Price'].notna()]
