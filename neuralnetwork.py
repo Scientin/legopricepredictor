@@ -12,16 +12,15 @@ from dateutil.parser import parse
 import preprocessing as pp
 
 dataframe = pd.DataFrame(columns = ['Pieces', 'Figures', 'Price', 'Year', 'Theme'])
-years = np.arange(2017,2024)
+years = np.arange(1995,2024)
 
 #Page request
 for i in years:
   page = requests.get('https://brickipedia.fandom.com/wiki/'+str(i))
   soup = bs(page.content)
   #Scrapes table and finds previous theme title
-  for u in np.arange(1,len(soup.select("table"))):
-    #Table 0 is skipped due to being a null table on all pages
-    table = soup.select("table")[u]
+  for u in np.arange(0,len(soup.select("table.themetable"))):
+    table = soup.select("table.themetable")[u]
     h3 = table.find_previous("h3")
     title = h3.find('span', class_='mw-headline').text.strip()
     dataframe = pd.concat([dataframe,pp.tablepreprocessing(table,title,i)],ignore_index=True)
